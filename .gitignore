@@ -1,0 +1,8 @@
+
+# Experiment artifacts
+cuts/
+output/
+experiments/__pycache__/
+*.pyc
+*.npz
+*.png
