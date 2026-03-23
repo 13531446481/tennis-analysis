@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+
+# Runtime outputs and artifacts
+output/
+*.log
+
+# Large model weights (download separately)
+checkpoints/*.pth
+WeightsTracknet/
+
+# Nested repo local metadata backup
+rtmlib/.git_local_backup/
+.git_local_backup_*/
