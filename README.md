@@ -63,7 +63,7 @@
 | 模块 | 功能 | 输入 | 输出 |
 |------|------|------|------|
 | **球检测** | 逐帧定位网球位置 | MP4 视频 | `{id}_predict_ball.csv` |
-| **姿态估计** | 识别多人17点骨骼关键点 | MP4 视频 | `pose_dump_all_frames.npz` |
+| **姿态估计** | 识别多人17点骨骼关键点 | MP4 视频 | `dump.npz` |
 | **事件分析** | 识别击球/落地帧 | CSV + NPZ | `hit_bounce.csv` |
 
 ### 使用场景
@@ -274,8 +274,8 @@ python estimate_pose.py --device cpu
 
 ```
 output/pose_keypoints/
-├── pose_dump_all_frames.npz   # 完整数据（关键点+分数+元数据）
-└── pose_keypoints_only.npy    # 仅关键点数组
+├── dump.npz            # 完整数据（关键点+分数+元数据）
+└── multi_keypoints.npy # 多人关键点数组
 ```
 
 ### 双人过滤 (Player Filtering)
@@ -299,31 +299,51 @@ python pose_filter.py
 
 ```
 output/pose_keypoints/
-└── players_only.npy           # 筛选后的2人关键点 (T,2,17,2)
+└── 2_keypoints.npy     # 筛选后的2人关键点 (T,2,17,2)
 
 output/pose_video/
-└── players_only_vis.mp4       # 可视化视频
+└── 001_players.mp4     # 可视化视频
 ```
 
 ### 轨迹分析 (Trajectory Analysis)
 
-分析球轨迹，识别击球和落地帧。
+分析球轨迹，识别击球和落地帧，并支持预处理轨迹可视化核对。
 
 **命令：**
 
 ```bash
-python ball_trajectory.py
+# 简化入口：输出击球/落地 CSV（默认平滑）
+python test/hit_bounce.py --video videos/001.mp4
 
-# 或查看详细事件分析
-python test/hit_bounce.py
+# 不平滑版本（更贴近原始预处理轨迹）
+python test/detect_hit_from_trajectory.py \
+  --video-id 001 \
+  --smooth-k 1 \
+  --out output/ball/hit_from_turns_001_nosmooth.csv
+
+# 预处理轨迹图（用于人工核对 hit/bounce）
+python test/plot_line_with_events.py \
+  --video-id 001 \
+  --hit 197 \
+  --bounce 206 \
+  --segment-mode longest \
+  --segment-gap 2 \
+  --segment-min-len 15 \
+  --min-err 300 \
+  --out output/ball/001_line_hit_bounce_preprocessed.png
 ```
 
-**输出事件：**
+**核心脚本（建议保留）：**
+
+- `test/hit_bounce.py`：主入口（自动输出 hit/bounce）
+- `test/detect_hit_from_trajectory.py`：转折检测核心逻辑
+- `test/plot_line_with_events.py`：预处理轨迹与事件点可视化
+
+**输出事件（示例）：**
 
 ```csv
-Frame,Event,Height,Velocity
-197,hit,2.45,25.3
-206,bounce,0.15,8.2
+video_id,hit,bounce,hit_sec,bounce_sec
+001,197,205,7.88,8.2
 ```
 
 ---
@@ -356,9 +376,9 @@ X, Y: 像素坐标 (通常为负值表示不可见)
 
 | 文件 | 格式 | 说明 |
 |------|------|------|
-| `pose_dump_all_frames.npz` | 对象数组 | 完整元数据：keypoints, scores, fps, resolution |
-| `pose_keypoints_only.npy` | (T, P, 17, 2) | T=帧数, P=人数(可变) |
-| `players_only.npy` | (T, 2, 17, 2) | T=帧数, 2=双人, 17=关键点, 2=坐标 |
+| `dump.npz` | 对象数组 | 完整元数据：keypoints, scores, fps, resolution |
+| `multi_keypoints.npy` | (T, P, 17, 2) | T=帧数, P=人数(可变) |
+| `2_keypoints.npy` | (T, 2, 17, 2) | T=帧数, 2=双人, 17=关键点, 2=坐标 |
 
 **17 个关键点顺序（COCO 格式）：**
 
@@ -373,13 +393,16 @@ X, Y: 像素坐标 (通常为负值表示不可见)
 
 ### 4. 事件输出 CSV
 
-路径: `output/ball/events.csv` 或 `test/hit_bounce.csv`
+路径: `output/ball/hit_bounce_{id}.csv` 或 `output/ball/hit_from_turns_{id}.csv`
 
 ```csv
-Frame,EventType,Description
-197,hit,击球帧
-206,bounce,落地帧
+video_id,hit,bounce,hit_sec,bounce_sec
+001,197,205,7.88,8.2
 ```
+
+说明：
+- `test/hit_bounce.py` 默认输出 `output/ball/hit_bounce_{id}.csv`
+- `test/detect_hit_from_trajectory.py` 可输出更详细字段（含 toss_apex、gap 等）
 
 ---
 
@@ -389,7 +412,7 @@ Frame,EventType,Description
 
 | 视频 | 分辨率 | 帧数 | 帧率 | 已验证 |
 |------|--------|------|------|--------|
-| `001.mp4` | 1280×720 | 154 | 25fps | ✅ |
+| `001.mp4` | 1280×720 | 333 | 25fps | ✅ |
 | `002.mp4` | 1280×720 | 154 | 25fps | ✅ |
 
 ### 已知事件
@@ -483,9 +506,9 @@ python predict.py --output_dir /custom/path
 │   └── pose_video/                 # 可视化视频
 │
 ├── test/
-│   ├── hit_bounce.py               # 击球/落地分析
-│   ├── ball_vs_head_report.py      # 球vs头部报告
-│   └── overlay_ball_head_debug_video.py
+│   ├── hit_bounce.py               # 击球/落地分析主入口
+│   ├── detect_hit_from_trajectory.py # 转折检测核心逻辑
+│   └── plot_line_with_events.py    # 预处理轨迹可视化
 │
 └── rtmlib/                         # RTMLib (骨骼检测库)
     ├── rtmlib/

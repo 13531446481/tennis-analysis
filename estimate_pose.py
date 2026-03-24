@@ -4,7 +4,12 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 
-from rtmlib import Body
+try:
+    # Local source layout in this repo: rtmlib/rtmlib/...
+    from rtmlib.rtmlib import Body
+except ImportError:
+    # Installed package layout
+    from rtmlib import Body
 
 
 def dump_pose_from_video(
@@ -78,7 +83,7 @@ def dump_pose_from_video(
     scores_obj = np.array(all_scores, dtype=object)
 
     # 1) npz (keypoints + scores + meta)
-    npz_path = os.path.join(out_dir, "pose_dump_all_frames.npz")
+    npz_path = os.path.join(out_dir, "dump.npz")
     np.savez_compressed(
         npz_path,
         keypoints=kpts_obj,
@@ -90,7 +95,7 @@ def dump_pose_from_video(
     )
 
     # 2) npy only keypoints (often enough)
-    npy_path = os.path.join(out_dir, "pose_keypoints_only.npy")
+    npy_path = os.path.join(out_dir, "multi_keypoints.npy")
     np.save(npy_path, kpts_obj, allow_pickle=True)
 
     print(f"\nSaved:")

@@ -5,7 +5,12 @@ import numpy as np
 import cv2
 from pathlib import Path
 
-from rtmlib.visualization import draw_skeleton
+try:
+    # Local source layout in this repo: rtmlib/rtmlib/...
+    from rtmlib.rtmlib.visualization import draw_skeleton
+except ImportError:
+    # Installed package layout
+    from rtmlib.visualization import draw_skeleton
 
 
 # ---------- geometry utils ----------
@@ -134,6 +139,7 @@ def select_players_by_baselines(kpts_people, court20, x_margin=30, max_d_px=None
 def find_pose_npz(pose_dump_dir):
     # Prefer common names
     candidates = [
+        os.path.join(pose_dump_dir, "dump.npz"),
         os.path.join(pose_dump_dir, "pose_dump_all_frames.npz"),
         os.path.join(pose_dump_dir, "pose_dump.npz"),
     ]
@@ -159,12 +165,12 @@ def main():
     project_root = Path(__file__).resolve().parent
     pose_dump_dir = str(project_root / "output" / "pose_keypoints")
     line_path = str(project_root / "output" / "line" / "001.npy")
-    out_path = str(project_root / "output" / "pose_keypoints" / "players_only.npy")
+    out_path = str(project_root / "output" / "pose_keypoints" / "2_keypoints.npy")
 
     # ----- visualization options -----
     SAVE_VIS = True
     VIDEO_PATH = str(project_root / "videos" / "001.mp4")
-    VIS_OUT_PATH = str(project_root / "output" / "pose_video" / "players_only_vis.mp4")
+    VIS_OUT_PATH = str(project_root / "output" / "pose_video" / "001_players.mp4")
     KPT_THR = 0.3  # drawing threshold (lower -> draw more)
 
     os.makedirs(pose_dump_dir, exist_ok=True)
@@ -255,7 +261,7 @@ def main():
 
     # save
     np.save(out_path, players)
-    print(f"[OK] saved players_only.npy -> {out_path}")
+    print(f"[OK] saved 2_keypoints.npy -> {out_path}")
 
     scores_out_path = out_path.replace(".npy", "_scores.npy")
     np.save(scores_out_path, players_scores)

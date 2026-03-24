@@ -389,7 +389,7 @@ def draw_ball_trajectory(video_path: str):
     # 读取网球、骨骼关键点和场地线数据
     file_name, _ = os.path.splitext(os.path.basename(video_path))
     balls = read_ball_points(file_name)
-    keypoints = read_npy('./output/pose_keypoints/pose_keypoints_only.npy')    
+    keypoints = read_npy('./output/pose_keypoints/multi_keypoints.npy')    
     lines = read_npy(f'./output/line/{file_name}.npy')
     draw_img(video_path, keypoints, balls, 0)
 

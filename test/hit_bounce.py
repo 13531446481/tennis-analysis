@@ -7,6 +7,8 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
+import detect_hit_from_trajectory as dht
+
 
 def moving_average_1d(x: np.ndarray, k: int = 5) -> np.ndarray:
     if k <= 1:
@@ -164,17 +166,13 @@ def estimate_toss_gate_frame(
             continue
         ball_y = float(xy[t, 1])
 
-        heads = np.array([
-            players[t, 0, 0, 1],
-            players[t, 1, 0, 1],
-        ], dtype=np.float32)
-        heads = heads[~np.isnan(heads)]
-        if heads.size == 0:
+        # 只用h1（靠近摄像头的球员头部）
+        h1_y = float(players[t, 1, 0, 1])
+        if np.isnan(h1_y):
             continue
 
         # Smaller y means visually higher in image coordinates.
-        top_head_y = float(np.min(heads))
-        cond[t] = ball_y + margin_px < top_head_y
+        cond[t] = ball_y + margin_px < h1_y
 
     run = 0
     for t in range(T):
@@ -217,12 +215,25 @@ def pick_hit_bounce(
     dtheta: np.ndarray,
     valid: np.ndarray,
     fps: float,
+    players: np.ndarray,
     start_frame: int = 0,
 ) -> Optional[Tuple[int, int]]:
     y = xy[:, 1]
     dy = np.diff(y, prepend=y[0])
 
-    hit_score = 0.50 * robust_z(acc) + 0.30 * robust_z(dtheta) + 0.20 * robust_z(np.maximum(0.0, np.diff(speed, prepend=speed[0])))
+    # 计算球是否高于h1（靠近摄像头的球员）
+    T = min(len(xy), len(players))
+    ball_over_h1 = np.zeros((len(xy),), dtype=np.float32)
+    for t in range(T):
+        if np.isnan(xy[t, 1]):
+            continue
+        h1_y = float(players[t, 1, 0, 1])
+        if np.isnan(h1_y):
+            continue
+        ball_over_h1[t] = 1.0 if xy[t, 1] < h1_y else 0.0
+
+    # 新的击球分数：只用速度、加速度、球高于头
+    hit_score = 0.40 * robust_z(acc) + 0.40 * robust_z(np.maximum(0.0, np.diff(speed, prepend=speed[0]))) + 0.20 * ball_over_h1
     bounce_turn = np.zeros_like(speed, dtype=np.float32)
     for t in range(2, len(y) - 1):
         if np.isnan(y[t - 1]) or np.isnan(y[t]) or np.isnan(y[t + 1]):
@@ -285,6 +296,7 @@ def resolve_ball_path(project_root: Path, video_id: str, user_ball_path: str) ->
         return user_ball_path
 
     candidates = [
+        project_root / "output" / "ball" / f"{video_id}_predict_ball.csv",
         project_root / "output" / "tracknetv4" / f"{video_id}_predict_ball.csv",
         project_root / "output" / "tracknetv4_pytorch" / f"{video_id}_predict_ball.csv",
         project_root / "output" / "ball" / f"{video_id}.npy",
@@ -320,6 +332,18 @@ def main() -> None:
     parser.add_argument("--video", required=True, help="Input video path")
     parser.add_argument("--ball", default="", help="Optional ball file path (.csv or .npy)")
     parser.add_argument("--players", default="", help="Optional players_only.npy path")
+    parser.add_argument("--smooth-k", type=int, default=7, help="Smoothing window for trajectory")
+    parser.add_argument("--eps", type=float, default=0.35, help="Turning threshold for hit detection")
+    parser.add_argument("--turn-q", type=float, default=0.45, help="Quantile threshold for hit turns")
+    parser.add_argument("--follow-sec", type=float, default=1.0, help="Follow window after apex for hit")
+    parser.add_argument("--bounce-max-sec", type=float, default=0.63, help="Max seconds from hit to bounce")
+    parser.add_argument("--bounce-min-frames", type=int, default=6, help="Minimum frames between hit and bounce")
+    parser.add_argument("--bounce-angle-q", type=float, default=0.60, help="Quantile threshold for bounce angle")
+    parser.add_argument("--bounce-min-angle-deg", type=float, default=10.0, help="Min angle for bounce")
+    parser.add_argument("--bounce-local-radius", type=int, default=3, help="Local neighborhood radius")
+    parser.add_argument("--bounce-local-prom-deg", type=float, default=6.0, help="Local angle prominence")
+    parser.add_argument("--head-margin", type=float, default=0.0, help="Ball-over-head margin")
+    parser.add_argument("--over-head-win", type=int, default=2, help="Neighbor frames for over-head check")
     parser.add_argument("--out", default="", help="Optional output csv path")
     args = parser.parse_args()
 
@@ -332,37 +356,59 @@ def main() -> None:
     ball_path = resolve_ball_path(project_root, video_id, args.ball)
 
     if ball_path.endswith(".csv"):
-        xy, vis = load_ball_csv(ball_path)
+        xy, vis = dht.load_ball_csv(Path(ball_path))
     elif ball_path.endswith(".npy"):
         xy, vis = load_ball_npy(ball_path)
     else:
         raise RuntimeError(f"Unsupported ball file: {ball_path}")
 
-    xy_i = interpolate_short_gaps(xy, vis, max_gap=6)
-    xy_s = smooth_xy(xy_i, k=5)
+    xy_i = dht.interpolate_all_gaps(xy, vis)
+    x_s = dht.moving_average_1d(xy_i[:, 0], k=int(args.smooth_k))
+    y_s = dht.moving_average_1d(xy_i[:, 1], k=int(args.smooth_k))
+    xy_s = np.stack([x_s, y_s], axis=1)
     fps = get_fps(str(video_path))
 
-    players_path = args.players or str(project_root / "output" / "pose_keypoints" / "players_only.npy")
-    toss_gate = 0
-    if os.path.isfile(players_path):
+    players_path = Path(args.players) if args.players else (project_root / "output" / "pose_keypoints" / "2_keypoints.npy")
+    if not players_path.is_absolute():
+        players_path = project_root / players_path
+
+    ball_over_head: Optional[np.ndarray] = None
+    if players_path.is_file():
         try:
-            players = load_players(players_path)
-            gate = estimate_toss_gate_frame(xy_s, vis, players, margin_px=8.0, min_consecutive=2)
-            if gate is not None:
-                toss_gate = int(gate)
+            players = dht.load_players(players_path)
+            ball_over_head = dht.compute_ball_over_head(xy_i, players, head_margin=float(args.head_margin))
         except Exception as e:
-            print(f"[WARN] toss gate disabled due to players file issue: {e}")
+            print(f"[WARN] over-head constraint disabled due to players issue: {e}")
     else:
-        print("[WARN] players file not found, toss gate disabled")
+        print("[WARN] players file not found, over-head constraint disabled")
 
-    speed, acc, dtheta, valid = compute_signals(xy_s, vis)
-    pair = pick_hit_bounce(xy_s, speed, acc, dtheta, valid, fps, start_frame=toss_gate)
-    if pair is None:
-        raise RuntimeError("Failed to detect hit/bounce pair")
+    turns = dht.detect_turns(y_s, eps=float(args.eps), min_gap=max(2, int(round(0.12 * fps))))
+    picked = dht.pick_initial_hit(
+        turns,
+        vis,
+        ball_over_head,
+        fps=float(fps),
+        min_turn_score_q=float(args.turn_q),
+        max_follow_sec=float(args.follow_sec),
+        over_head_win=max(0, int(args.over_head_win)),
+    )
+    if picked is None:
+        raise RuntimeError("Failed to detect hit")
 
-    hit, bounce = pair
-    if bounce <= hit:
-        raise RuntimeError(f"Invalid pair: hit={hit}, bounce={bounce}")
+    hit, toss_f0, reason = picked
+    bounce = dht.pick_next_bounce_after_hit(
+        xy_s,
+        hit,
+        fps=float(fps),
+        min_gap_sec=max(0.08, float(args.bounce_min_frames) / float(fps)),
+        max_gap_sec=float(args.bounce_max_sec),
+        angle_q=float(args.bounce_angle_q),
+        min_angle_deg=float(args.bounce_min_angle_deg),
+        local_radius=int(args.bounce_local_radius),
+        local_prominence_deg=float(args.bounce_local_prom_deg),
+    )
+    if bounce is None:
+        raise RuntimeError("Failed to detect bounce")
 
     output_csv = args.out
     if not output_csv:
@@ -373,9 +419,13 @@ def main() -> None:
     print(f"video={video_path}")
     print(f"ball={ball_path}")
     print(f"fps={fps:.3f}")
-    print(f"toss_gate={toss_gate} ({toss_gate / fps:.3f}s)")
+    if toss_f0 is not None:
+        print(f"toss_apex={toss_f0} ({toss_f0 / fps:.3f}s)")
+    else:
+        print("toss_apex=None")
     print(f"hit={hit} ({hit / fps:.3f}s)")
     print(f"bounce={bounce} ({bounce / fps:.3f}s)")
+    print(f"reason={reason}")
     print(f"saved={output_csv}")
 
 
