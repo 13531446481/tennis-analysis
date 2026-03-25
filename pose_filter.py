@@ -4,6 +4,7 @@ import glob
 import numpy as np
 import cv2
 from pathlib import Path
+import argparse
 
 try:
     # Local source layout in this repo: rtmlib/rtmlib/...
@@ -161,19 +162,32 @@ def load_pose_npz(npz_path):
     return kpts, scores, meta
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Filter two players (top/bottom) from multi-person pose")
+    parser.add_argument("--video_id", type=str, default="001", help="Video id, e.g. 001")
+    parser.add_argument("--pose_npz", type=str, default="", help="Optional pose npz path")
+    parser.add_argument("--line_npy", type=str, default="", help="Optional court line npy path")
+    parser.add_argument("--video_path", type=str, default="", help="Optional video path for visualization")
+    parser.add_argument("--save_vis", action="store_true", help="Enable visualization video output")
+    parser.add_argument("--no_vis", action="store_true", help="Deprecated: visualization is disabled by default")
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     project_root = Path(__file__).resolve().parent
     pose_dump_dir = str(project_root / "output" / "pose_keypoints")
-    line_path = str(project_root / "output" / "line" / "001.npy")
-    out_path = str(project_root / "output" / "pose_keypoints" / "2_keypoints.npy")
+    line_path = str(Path(args.line_npy)) if args.line_npy else str(project_root / "output" / "line" / f"{args.video_id}.npy")
+    out_path = str(project_root / "output" / "pose_keypoints" / args.video_id / "2_keypoints.npy")
 
     # ----- visualization options -----
-    SAVE_VIS = True
-    VIDEO_PATH = str(project_root / "videos" / "001.mp4")
-    VIS_OUT_PATH = str(project_root / "output" / "pose_video" / "001_players.mp4")
+    SAVE_VIS = args.save_vis and (not args.no_vis)
+    VIDEO_PATH = str(Path(args.video_path)) if args.video_path else str(project_root / "videos" / f"{args.video_id}.mp4")
+    VIS_OUT_PATH = str(project_root / "output" / "pose_video" / f"{args.video_id}_players.mp4")
     KPT_THR = 0.3  # drawing threshold (lower -> draw more)
 
     os.makedirs(pose_dump_dir, exist_ok=True)
+    os.makedirs(str(project_root / "output" / "pose_keypoints" / args.video_id), exist_ok=True)
     os.makedirs(str(project_root / "output" / "pose_video"), exist_ok=True)
 
     # ----- selection tuning -----
@@ -182,7 +196,7 @@ def main():
     # Optional: set e.g. 160 to enforce "must be near baseline" more strictly; keep None first
     MAX_D_PX = None
 
-    pose_npz = find_pose_npz(pose_dump_dir)
+    pose_npz = args.pose_npz if args.pose_npz else find_pose_npz(pose_dump_dir)
     if pose_npz is None:
         raise FileNotFoundError(f"No .npz pose dump found in: {pose_dump_dir}")
 

@@ -412,7 +412,7 @@ def main() -> None:
 
     output_csv = args.out
     if not output_csv:
-        output_csv = str(project_root / "output" / "ball" / f"hit_bounce_{video_id}.csv")
+        output_csv = str(project_root / "output" / "hit_bounce" / f"{video_id}.csv")
 
     save_result_csv(output_csv, video_id, hit, bounce, fps)
 

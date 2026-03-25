@@ -10,6 +10,29 @@ import cv2
 import numpy as np
 
 
+def load_players(players_path: Path) -> np.ndarray:
+    arr = np.load(players_path)
+    if arr.ndim != 4 or arr.shape[1] < 2 or arr.shape[2] < 1 or arr.shape[3] != 2:
+        raise RuntimeError(f"Unexpected players shape: {arr.shape}")
+    return arr.astype(np.float32)
+
+
+def compute_ball_over_head(pts, players: np.ndarray, head_margin: float = 0.0):
+    out = {}
+    if players is None:
+        return out
+    tmax = players.shape[0]
+    for fr, x, y in pts:
+        t = fr
+        if t < 0 or t >= tmax:
+            continue
+        hy = float(players[t, 1, 0, 1])
+        if np.isnan(hy):
+            continue
+        out[fr] = bool(float(y) + float(head_margin) < hy)
+    return out
+
+
 def load_ball(csv_path: Path) -> Dict[int, Tuple[int, float, float]]:
     out: Dict[int, Tuple[int, float, float]] = {}
     with csv_path.open("r", encoding="utf-8") as f:
@@ -154,6 +177,13 @@ def main() -> None:
     ap.add_argument("--max-gap", type=int, default=6)
     ap.add_argument("--z-thresh", type=float, default=4.0)
     ap.add_argument("--min-err", type=float, default=18.0)
+    ap.add_argument("--players", default="", help="Optional players npy for over-head check")
+    ap.add_argument("--head-margin", type=float, default=0.0, help="Ball-over-head margin in pixels")
+    ap.add_argument("--raw-only", action="store_true", help="Draw raw visible points only (no segment/denoise)")
+    ap.add_argument("--show-frame-labels", action="store_true", help="Draw frame index label near each point")
+    ap.add_argument("--label-step", type=int, default=1, help="Frame label step (1 means label every point)")
+    ap.add_argument("--start-frame", type=int, default=0, help="Start frame (inclusive) for plotting")
+    ap.add_argument("--end-frame", type=int, default=-1, help="End frame (inclusive), -1 means no upper limit")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -175,33 +205,46 @@ def main() -> None:
     if not ret:
         raise RuntimeError("Failed to read first frame")
 
+    start_fr = max(0, int(args.start_frame))
+    end_fr = int(args.end_frame)
+
     pts_raw = []
     for fr in sorted(ball.keys()):
+        if fr < start_fr:
+            continue
+        if end_fr >= 0 and fr > end_fr:
+            continue
         vis, x, y = ball[fr]
         if vis == 1 and x >= 0 and y >= 0:
             pts_raw.append((fr, int(round(x)), int(round(y))))
 
-    pts_seg, segs = select_segment(
-        pts_raw,
-        mode=str(args.segment_mode),
-        min_len=int(args.segment_min_len),
-        max_inner_gap=int(args.segment_gap),
-    )
-    if not pts_seg:
-        raise RuntimeError("No points selected after segment filtering")
-
-    if args.no_denoise:
-        pts = pts_seg
+    if args.raw_only:
+        pts_seg = pts_raw
+        segs = [pts_raw] if pts_raw else []
+        pts = pts_raw
         removed = []
     else:
-        pts, removed = denoise_flyaway_points(
-            pts_seg,
-            max_gap_frames=int(args.max_gap),
-            z_thresh=float(args.z_thresh),
-            min_err_px=float(args.min_err),
+        pts_seg, segs = select_segment(
+            pts_raw,
+            mode=str(args.segment_mode),
+            min_len=int(args.segment_min_len),
+            max_inner_gap=int(args.segment_gap),
         )
-    if not pts:
-        raise RuntimeError("No points left after denoise")
+        if not pts_seg:
+            raise RuntimeError("No points selected after segment filtering")
+
+        if args.no_denoise:
+            pts = pts_seg
+            removed = []
+        else:
+            pts, removed = denoise_flyaway_points(
+                pts_seg,
+                max_gap_frames=int(args.max_gap),
+                z_thresh=float(args.z_thresh),
+                min_err_px=float(args.min_err),
+            )
+        if not pts:
+            raise RuntimeError("No points left after denoise")
 
     for i in range(1, len(pts)):
         _, x0, y0 = pts[i - 1]
@@ -211,7 +254,40 @@ def main() -> None:
     for fr, x, y in pts:
         cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)
 
+    if args.show_frame_labels:
+        step = max(1, int(args.label_step))
+        for i, (fr, x, y) in enumerate(pts):
+            if i % step != 0:
+                continue
+            cv2.putText(
+                frame,
+                f"{fr}",
+                (x + 3, y - 3),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (240, 240, 240),
+                1,
+                cv2.LINE_AA,
+            )
+
     pts_map = {fr: (x, y) for fr, x, y in pts}
+
+    players_path = Path(args.players) if args.players else (root / "output" / "pose_keypoints" / "2_keypoints.npy")
+    if not players_path.is_absolute():
+        players_path = root / players_path
+    players = None
+    if players_path.is_file():
+        try:
+            players = load_players(players_path)
+        except Exception:
+            players = None
+
+    over_head = compute_ball_over_head(pts, players, head_margin=float(args.head_margin))
+
+    # 在预处理描点上额外标注“球高于头(h1)”状态
+    for fr, x, y in pts:
+        if over_head.get(fr, False):
+            cv2.circle(frame, (x, y), 6, (255, 0, 255), 1, cv2.LINE_AA)
 
     event_colors = {
         args.hit: (0, 255, 255),
@@ -222,7 +298,9 @@ def main() -> None:
             xi, yi = pts_map[efr]
             cv2.circle(frame, (xi, yi), 8, c, 2)
             tag = "HIT" if efr == args.hit else "BOUNCE"
-            draw_label(frame, f"{tag} f{efr} ({xi},{yi})", xi, yi, c)
+            oh = over_head.get(efr, None)
+            oh_text = "over_head=NA" if oh is None else f"over_head={int(bool(oh))}"
+            draw_label(frame, f"{tag} f{efr} ({xi},{yi}) {oh_text}", xi, yi, c)
         else:
             # 不可见帧：尝试用相邻可见点插值估计位置并高亮
             est = interp_event_xy(pts, efr)
@@ -232,11 +310,17 @@ def main() -> None:
                 cv2.line(frame, (xi - 8, yi), (xi + 8, yi), c, 2, cv2.LINE_AA)
                 cv2.line(frame, (xi, yi - 8), (xi, yi + 8), c, 2, cv2.LINE_AA)
                 tag = "HIT" if efr == args.hit else "BOUNCE"
-                draw_label(frame, f"{tag} f{efr} interp({xi},{yi})", xi, yi, c)
+                oh = over_head.get(efr, None)
+                oh_text = "over_head=NA" if oh is None else f"over_head={int(bool(oh))}"
+                draw_label(frame, f"{tag} f{efr} interp({xi},{yi}) {oh_text}", xi, yi, c)
 
-    cv2.rectangle(frame, (10, 10), (920, 86), (0, 0, 0), -1)
-    cv2.putText(frame, f"video={args.video_id}  red=ball  green=line  yellow=hit({args.hit})  cyan=bounce({args.bounce})", (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, f"preprocess: raw={len(pts_raw)} seg={len(pts_seg)} keep={len(pts)} rm={len(removed)} segs={len(segs)}", (16, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 255, 180), 1, cv2.LINE_AA)
+    oh_count = int(sum(1 for _, v in over_head.items() if v))
+
+    cv2.rectangle(frame, (10, 10), (1040, 110), (0, 0, 0), -1)
+    cv2.putText(frame, f"video={args.video_id} red=ball green=line yellow=hit({args.hit}) cyan=bounce({args.bounce}) magenta_ring=over_head", (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+    mode_text = "raw-only" if args.raw_only else "segment+denoise"
+    cv2.putText(frame, f"preprocess[{mode_text}]: raw={len(pts_raw)} seg={len(pts_seg)} keep={len(pts)} rm={len(removed)} segs={len(segs)}", (16, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 255, 180), 1, cv2.LINE_AA)
+    cv2.putText(frame, f"over_head_true={oh_count}/{len(pts)}  players={'yes' if players is not None else 'no'}", (16, 88), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 180, 255), 1, cv2.LINE_AA)
 
     out = Path(args.out) if args.out else root / "output" / "ball" / f"{args.video_id}_line_hit_bounce_preprocessed.png"
     if not out.is_absolute():

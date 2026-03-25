@@ -22,9 +22,9 @@
       - [2. 模型权重](#2-模型权重)
       - [3. Python 环境](#3-python-环境)
     - [环境配置](#环境配置)
-      - [方法 A：使用 pip (推荐)](#方法-a使用-pip-推荐)
-      - [方法 B：使用 Conda](#方法-b使用-conda)
+      - [使用 Conda（推荐）](#使用-conda推荐)
       - [验证安装](#验证安装)
+      - [依赖库与配置说明](#依赖库与配置说明)
   - [使用指南](#使用指南)
     - [完整流程](#完整流程)
     - [球检测 (Ball Detection)](#球检测-ball-detection)
@@ -125,7 +125,7 @@ mkdir -p checkpoints/
 
 #### 3. Python 环境
 
-推荐 Python 3.8+ with CUDA 12.1+：
+推荐环境（已验证）：Python 3.10 + CUDA 12.8 + PyTorch 2.11.0+cu128（RTX 50 系列可用）。
 
 ```bash
 # 查看 Python 版本
@@ -137,38 +137,55 @@ python -c "import torch; print(torch.cuda.is_available())"
 
 ### 环境配置
 
-#### 方法 A：使用 pip (推荐)
+#### 使用 Conda（推荐）
 
 ```bash
-# 1. 创建虚拟环境（可选）
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  # Windows
+# 1) 创建并激活环境
+conda create -n py310 python=3.10 -y
+conda activate py310
 
-# 2. 安装依赖
+# 2) 安装 GPU 版 PyTorch（CUDA 12.8）
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# 3) 安装项目基础依赖
 pip install -r requirements.txt
 
-# 3. 安装 GPU 版 PyTorch（如需 CUDA）
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-#### 方法 B：使用 Conda
-
-```bash
-conda create -n tennis-analysis python=3.8
-conda activate tennis-analysis
-pip install -r requirements.txt
+# 4) 安装完整流程建议依赖（用于轨迹图/姿态后处理）
+pip install matplotlib scikit-learn onnxruntime-gpu
 ```
 
 #### 验证安装
 
 ```bash
 python -c "
-import cv2, numpy, torch, rtmlib
+import cv2, numpy, torch
 print('✓ 环境配置完成')
 print('GPU 可用:', torch.cuda.is_available())
+print('Torch:', torch.__version__)
+print('CUDA:', torch.version.cuda)
+print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')
 "
 ```
+
+#### 依赖库与配置说明
+
+| 库 | 用途 | 是否必需 | 配置方式 |
+|------|------|------|------|
+| `torch`, `torchvision`, `torchaudio` | TrackNet V4 推理（`predict.py`） | 必需 | 使用 `cu128` 源安装 GPU 版 |
+| `opencv-python` | 视频读写、绘制与保存 | 必需 | 已在 `requirements.txt` |
+| `numpy` | 数值计算与数组处理 | 必需 | 已在 `requirements.txt` |
+| `pandas` | 球检测 CSV 读写 | 必需 | 已在 `requirements.txt` |
+| `scipy` | 场地线/信号处理 | 必需 | 已在 `requirements.txt` |
+| `tqdm` | 进度条显示 | 必需 | 已在 `requirements.txt` |
+| `pyyaml` | 配置读取 | 必需 | 已在 `requirements.txt` |
+| `tensorboard` | 训练/调试日志 | 可选 | 已在 `requirements.txt` |
+| `matplotlib` | 轨迹图与调试可视化 | 建议安装 | `pip install matplotlib` |
+| `scikit-learn` | 轨迹去噪（如 LOF） | 建议安装 | `pip install scikit-learn` |
+| `onnxruntime-gpu` | RTMLib 的 GPU 后端 | 姿态模块推荐 | `pip install onnxruntime-gpu` |
+
+建议：
+- 只跑球检测（`predict.py`）：安装 PyTorch + `requirements.txt` 即可。
+- 跑完整流程（球检测 + 姿态 + 轨迹分析）：额外安装 `matplotlib`、`scikit-learn`、`onnxruntime-gpu`。
 
 ---
 
@@ -421,6 +438,9 @@ video_id,hit,bounce,hit_sec,bounce_sec
 |------|--------|--------|------|
 | 001 | 197 | 206 | 标准发球 |
 | 002 | 55 | 66 | - |
+| 003 | 55 | 64 | - |
+| 004 | 29 | 39 | - |
+| 005 | 25 | 36 | - |
 
 ---
 
@@ -441,14 +461,14 @@ git pull origin main
 **A:** 检查 PyTorch + CUDA 安装：
 
 ```bash
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name())"
+python -c "import torch; print(torch.cuda.is_available(), torch.__version__, torch.version.cuda)"
 ```
 
 如果返回 `False`，重新安装 GPU 版本：
 
 ```bash
 pip uninstall torch
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### Q3: 可以用 CPU 跑吗？
