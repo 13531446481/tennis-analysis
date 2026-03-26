@@ -225,6 +225,13 @@ def first_true_cluster(mask: np.ndarray, start: int, max_gap: int = 2, min_len: 
     return None
 
 
+def first_visible_after(vis: np.ndarray, start: int) -> Optional[int]:
+    for i in range(max(0, start), len(vis)):
+        if int(vis[i]) == 1:
+            return i
+    return None
+
+
 def pick_initial_hit(
     turns: List[Tuple[int, str, float]],
     vis: np.ndarray,
@@ -254,6 +261,11 @@ def pick_initial_hit(
             if cand_local:
                 cand = cand_local
                 reason_suffix = "_oh_window"
+            else:
+                next_vis = first_visible_after(vis, oh_end + 1)
+                short_gap_limit = max(3, int(round(0.25 * fps)))
+                if next_vis is not None and 1 < (next_vis - oh_end) <= short_gap_limit:
+                    return oh_end, None, "over_head_gap_hit"
             search_end = max(search_end, local_end)
 
     scores = np.array([t[2] for t in cand], dtype=np.float32)
@@ -293,6 +305,7 @@ def pick_next_bounce_after_hit(
     min_angle_deg: float = 8.0,
     local_radius: int = 2,
     local_prominence_deg: float = 3.0,
+    prefer_y_turn: bool = False,
 ) -> Optional[int]:
     total = len(xy)
     min_gap = max(2, int(round(min_gap_sec * fps)))
@@ -341,7 +354,7 @@ def pick_next_bounce_after_hit(
 
     best_frame = None
     best_score = -1e9
-    frame_scores: List[Tuple[int, float, float, float]] = []
+    frame_scores: List[Tuple[int, float, float, float, float]] = []
     for i, (t, ang, y_turn, prom, gap) in enumerate(scored):
         if y_turn <= 0:
             continue
@@ -349,13 +362,13 @@ def pick_next_bounce_after_hit(
             0.45 * float(ang_s[i])
             + 0.35 * float(prom_s[i])
             + 0.20 * float(y_s[i])
-            - 0.12 * abs(gap - expected_gap)
+            - 0.06 * abs(gap - expected_gap)
         )
         if ang >= thr:
             score += 0.20
         if prom >= float(local_prominence_deg):
             score += 0.20
-        frame_scores.append((t, score, ang, gap))
+        frame_scores.append((t, score, ang, gap, y_turn))
         if score > best_score:
             best_score = score
             best_frame = t
@@ -366,7 +379,10 @@ def pick_next_bounce_after_hit(
         if item[3] >= ready_gap and item[1] >= best_score - 0.25
     ]
     if qualified:
-        best_qualified = min(qualified, key=lambda item: (abs(item[3] - expected_gap), item[0]))
+        if prefer_y_turn:
+            best_qualified = max(qualified, key=lambda item: (item[1] + 0.015 * item[4], -abs(item[3] - expected_gap), -item[0]))
+        else:
+            best_qualified = min(qualified, key=lambda item: (abs(item[3] - expected_gap), -item[1], item[0]))
         return int(best_qualified[0])
 
     if best_frame is not None:
@@ -496,6 +512,7 @@ def main() -> None:
         min_angle_deg=float(args.bounce_min_angle_deg),
         local_radius=int(args.bounce_local_radius),
         local_prominence_deg=float(args.bounce_local_prom_deg),
+        prefer_y_turn=(reason == "over_head_gap_hit"),
     )
     if bounce is None:
         raise RuntimeError("Failed to detect bounce")
