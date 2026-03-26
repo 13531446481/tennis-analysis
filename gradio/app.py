@@ -364,7 +364,7 @@ with gr.Blocks(title="Serve Speed Demo") as demo:
     gr.Markdown(
         """
         <div id="hero">
-          <div class="eyebrow">Tennis Serve-Speed Demo</div>
+          <div class="eyebrow">Tennis Serve-Speed</div>
           <p>
             选择本地视频后，按主流程逐步完成检测与速度计算。
             页面优先展示核心操作与最终结果，高级参数、调试日志和输出文件会收纳在次级区域。
