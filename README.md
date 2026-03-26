@@ -529,8 +529,6 @@ python predict.py --output_dir /custom/path
 ├── court_reference.py              # 场地参考模板
 ├── estimate_pose.py                # 姿态估计 (RTMLib)
 ├── pose_filter.py                  # 双人过滤
-├── ball_trajectory.py              # 轨迹分析
-├── draw.py                         # 绘制工具
 ├── pose_filter.py                  # 姿态过滤
 │
 ├── model/
