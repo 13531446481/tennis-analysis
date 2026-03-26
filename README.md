@@ -430,6 +430,12 @@ video_id,hit,bounce,hit_sec,bounce_sec
 - `hit_bounce.py` 默认输出 `output/hit_bounce/{id}.csv`
 - `hit_bounce.py` 命令行输出包含 `toss_apex`、`reason` 等诊断信息
 
+### Gradio 演示界面
+
+- 启动命令：`python gradio_pipeline.py`
+- 默认从 `videos/` 目录选择本地视频，按步骤完成球检测、姿态、击球落地与发球速度计算
+- 界面样式文件：`gradio/styles.css`
+
 ---
 
 ## 已验证数据
@@ -547,6 +553,9 @@ python predict.py --output_dir /custom/path
 │   └── plot_line_with_events.py    # 预处理轨迹可视化
 │
 ├── hit_bounce.py                   # 击球/落地分析主入口
+├── gradio_pipeline.py              # Gradio 交互式全流程界面
+├── gradio/
+│   └── styles.css                  # Gradio 界面样式
 │
 └── rtmlib/                         # RTMLib (骨骼检测库)
     ├── rtmlib/
