@@ -1,6 +1,6 @@
 # 网球分析系统 (Tennis Analysis System)
 
-一个完整的网球视频分析工具链，用于自动检测球路、识别运动员姿态、分析击球与落地事件。
+一个面向网球发球分析的完整工具链，用于自动检测网球、识别球员姿态、分析击球/落地事件，并反算发球初速度。
 
 > 本项目整合了 TrackNet V4 球检测、RTMLib 姿态估计、以及自定义事件检测算法。
 
@@ -58,19 +58,21 @@
 
 ### 核心功能
 
-该工具链分为 **3 大模块**：
+该工具链目前分为 **5 个核心阶段**：
 
 | 模块 | 功能 | 输入 | 输出 |
 |------|------|------|------|
 | **球检测** | 逐帧定位网球位置 | MP4 视频 | `{id}_predict_ball.csv` |
-| **姿态估计** | 识别多人17点骨骼关键点 | MP4 视频 | `dump.npz` |
-| **事件分析** | 识别击球/落地帧 | CSV + NPZ | `hit_bounce.csv` |
+| **场地线检测** | 提取标准球场线点 | MP4 视频 | `{id}.npy` |
+| **姿态估计 + 双人过滤** | 输出双人关键点 | MP4 视频 + line | `2_keypoints.npy` |
+| **事件分析** | 识别击球/落地帧 | ball CSV + players NPY | `hit_bounce.csv` |
+| **速度求解** | 反算发球初速度 | hit/bounce + line + players | `step2_velocity.json` |
 
 ### 使用场景
 
 - ✅ 自动化网球比赛分析
 - ✅ 骨骼姿态研究
-- ✅ 击球轨迹性能评估
+- ✅ 发球速度反算与可视化演示
 - ✅ 数据驱动的教练反馈
 
 ---
@@ -83,7 +85,7 @@
 - **[RTMLib](https://github.com/IDEA-Research/RTMLib)** - 姿态估计库 (ONNX Runtime)
 - **[OpenCV](https://opencv.org/)** - 视频处理
 - **[NumPy / Pandas](https://numpy.org/)** - 数据处理
-- **[Scikit-learn](https://scikit-learn.org/)** - 几何计算
+- **[Gradio](https://gradio.app/)** - 交互式演示界面
 
 ### 硬件要求
 
@@ -265,22 +267,17 @@ Frame,Visibility,X,Y
 **命令：**
 
 ```bash
-python estimate_pose.py \
-  --device cuda \
-  --backend onnxruntime \
-  --mode performance
-
-# 或仅用 CPU
-python estimate_pose.py --device cpu
+python -c "from estimate_pose import dump_pose_from_video; dump_pose_from_video(video_path='videos/001.mp4', out_dir='output/pose_keypoints/001', device='cuda', backend='onnxruntime', mode='performance', to_openpose=False, max_frames=-1)"
 ```
 
 **参数：**
 
-| 参数 | 说明 | 可选值 |
-|------|------|--------|
-| `--device` | 运行设备 | `cuda` / `cpu` / `mps` |
-| `--backend` | 推理引擎 | `opencv` / `onnxruntime` / `openvino` |
-| `--mode` | 推理模式 | `lightweight` / `balanced` / `performance` |
+常用参数：
+
+- `device`: `cuda` / `cpu`
+- `backend`: `onnxruntime` / `opencv` / `openvino`
+- `mode`: `lightweight` / `balanced` / `performance`
+- `max_frames=-1`: 处理完整视频
 
 > **📝 性能提示：**
 > - GPU (RTX 5060): ~2-5 分钟/154 帧视频
@@ -290,7 +287,7 @@ python estimate_pose.py --device cpu
 **输出：**
 
 ```
-output/pose_keypoints/
+output/pose_keypoints/001/
 ├── dump.npz            # 完整数据（关键点+分数+元数据）
 └── multi_keypoints.npy # 多人关键点数组
 ```
@@ -322,7 +319,7 @@ output/pose_video/
 └── 001_players.mp4     # 可视化视频
 ```
 
-### 轨迹分析 (Trajectory Analysis)
+### 事件分析与速度求解 (Event + Speed)
 
 分析球轨迹，识别击球和落地帧，并支持预处理轨迹可视化核对。
 
@@ -338,31 +335,33 @@ output/pose_video/
 **命令：**
 
 ```bash
-# 简化入口：输出击球/落地 CSV（默认平滑）
-python hit_bounce.py --video videos/001.mp4
+# 事件分析
+python hit_bounce.py --video videos/001.mp4 --players output/pose_keypoints/001/2_keypoints.npy
 
-# 更少平滑版本（更贴近原始预处理轨迹）
-python hit_bounce.py \
-  --video videos/001.mp4 \
-  --smooth-k 1 \
-  --out output/hit_bounce/001_nosmooth.csv
+# 二维映射
+python step1_standard_2d.py \
+  --video_id 001 \
+  --hit_frame 197 \
+  --bounce_frame 206 \
+  --server_id 1 \
+  --video_path videos/001.mp4 \
+  --line_npy output/line/001.npy \
+  --players_npy output/pose_keypoints/001/2_keypoints.npy \
+  --ball_csv output/ball/001_predict_ball.csv
 
-# 预处理轨迹图（用于人工核对 hit/bounce）
-python test/plot_line_with_events.py \
-  --video-id 001 \
-  --hit 197 \
-  --bounce 206 \
-  --segment-mode longest \
-  --segment-gap 2 \
-  --segment-min-len 15 \
-  --min-err 300 \
-  --out output/ball/001_line_hit_bounce_preprocessed.png
+# 速度求解
+python step2_initial_velocity.py \
+  --video_id 001 \
+  --step1_json output/step1_2d/001/step1_2d.json \
+  --z_hit 2.775 \
+  --z_bounce 0.0
 ```
 
-**核心脚本（建议保留）：**
+**相关脚本：**
 
 - `hit_bounce.py`：主入口（自动输出 hit/bounce）
-- `hit_bounce.py`：内置转折检测核心逻辑
+- `step1_standard_2d.py`：击球/落地点映射到标准球场坐标系
+- `step2_initial_velocity.py`：基于 2D+高度先验反算初速度
 - `test/plot_line_with_events.py`：预处理轨迹与事件点可视化
 
 **输出事件（示例）：**
@@ -434,7 +433,8 @@ video_id,hit,bounce,hit_sec,bounce_sec
 
 - 启动命令：`python gradio_pipeline.py`
 - 默认从 `videos/` 目录选择本地视频，按步骤完成球检测、姿态、击球落地与发球速度计算
-- 界面样式文件：`gradio/styles.css`
+- 主实现：`gradio/app.py`
+- 界面样式：`gradio/styles.css`
 
 ---
 
@@ -446,6 +446,7 @@ video_id,hit,bounce,hit_sec,bounce_sec
 |------|--------|------|------|--------|
 | `001.mp4` | 1280×720 | 333 | 25fps | ✅ |
 | `002.mp4` | 1280×720 | 154 | 25fps | ✅ |
+| `003` - `014` | - | - | - | 部分验证 |
 
 ### 已知事件
 
@@ -497,7 +498,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 ### Q3: 可以用 CPU 跑吗？
 
-**A:** 可以，但速度较慢（20-30 倍）。修改脚本中的 `device="cpu"`
+**A:** 可以，但速度较慢。命令行脚本可显式传 `--device cpu`，Gradio 界面也可在高级设置中切换。
 
 ### Q4: 如何处理自定义视频？
 
@@ -529,7 +530,9 @@ python predict.py --output_dir /custom/path
 ├── court_reference.py              # 场地参考模板
 ├── estimate_pose.py                # 姿态估计 (RTMLib)
 ├── pose_filter.py                  # 双人过滤
-├── pose_filter.py                  # 姿态过滤
+├── run_full_pipeline.py            # 命令行全流程入口
+├── step1_standard_2d.py            # 标准球场二维映射
+├── step2_initial_velocity.py       # 发球初速度求解
 │
 ├── model/
 │   └── tracknet_v4.py              # TrackNet V4 模型定义
@@ -544,15 +547,19 @@ python predict.py --output_dir /custom/path
 ├── output/
 │   ├── ball/                       # 球检测结果
 │   ├── line/                       # 场地线检测结果
+│   ├── hit_bounce/                 # 击球/落地结果
 │   ├── pose_keypoints/             # 骨骼关键点数据
-│   └── pose_video/                 # 可视化视频
+│   ├── step1_2d/                   # 标准球场坐标映射结果
+│   ├── step2_velocity/             # 球速结果
+│   └── step2_trajectory/           # 轨迹可视化结果
 │
 ├── test/
 │   └── plot_line_with_events.py    # 预处理轨迹可视化
 │
 ├── hit_bounce.py                   # 击球/落地分析主入口
-├── gradio_pipeline.py              # Gradio 交互式全流程界面
+├── gradio_pipeline.py              # Gradio 启动别名
 ├── gradio/
+│   ├── app.py                      # Gradio 主实现
 │   └── styles.css                  # Gradio 界面样式
 │
 └── rtmlib/                         # RTMLib (骨骼检测库)
