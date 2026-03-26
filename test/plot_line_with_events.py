@@ -322,7 +322,7 @@ def main() -> None:
     cv2.putText(frame, f"preprocess[{mode_text}]: raw={len(pts_raw)} seg={len(pts_seg)} keep={len(pts)} rm={len(removed)} segs={len(segs)}", (16, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 255, 180), 1, cv2.LINE_AA)
     cv2.putText(frame, f"over_head_true={oh_count}/{len(pts)}  players={'yes' if players is not None else 'no'}", (16, 88), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 180, 255), 1, cv2.LINE_AA)
 
-    out = Path(args.out) if args.out else root / "output" / "ball" / f"{args.video_id}_line_hit_bounce_preprocessed.png"
+    out = Path(args.out) if args.out else root / "output" / "test" / f"{args.video_id}_line_hit_bounce_preprocessed.png"
     if not out.is_absolute():
         out = root / out
     out.parent.mkdir(parents=True, exist_ok=True)

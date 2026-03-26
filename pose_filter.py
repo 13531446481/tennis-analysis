@@ -176,7 +176,8 @@ def parse_args():
 def main():
     args = parse_args()
     project_root = Path(__file__).resolve().parent
-    pose_dump_dir = str(project_root / "output" / "pose_keypoints")
+    pose_dump_dir = str(project_root / "output" / "pose_keypoints" / args.video_id)
+    legacy_pose_dump_dir = str(project_root / "output" / "pose_keypoints")
     line_path = str(Path(args.line_npy)) if args.line_npy else str(project_root / "output" / "line" / f"{args.video_id}.npy")
     out_path = str(project_root / "output" / "pose_keypoints" / args.video_id / "2_keypoints.npy")
 
@@ -196,9 +197,14 @@ def main():
     # Optional: set e.g. 160 to enforce "must be near baseline" more strictly; keep None first
     MAX_D_PX = None
 
-    pose_npz = args.pose_npz if args.pose_npz else find_pose_npz(pose_dump_dir)
+    if args.pose_npz:
+        pose_npz = args.pose_npz
+    else:
+        pose_npz = find_pose_npz(pose_dump_dir)
+        if pose_npz is None:
+            pose_npz = find_pose_npz(legacy_pose_dump_dir)
     if pose_npz is None:
-        raise FileNotFoundError(f"No .npz pose dump found in: {pose_dump_dir}")
+        raise FileNotFoundError(f"No .npz pose dump found in: {pose_dump_dir} or {legacy_pose_dump_dir}")
 
     if not os.path.isfile(line_path):
         raise FileNotFoundError(f"Line file not found: {line_path}")

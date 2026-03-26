@@ -108,7 +108,8 @@ if __name__ == "__main__":
     # default paths relative to project root
     project_root = Path(__file__).resolve().parent
     video_path = str(project_root / "videos" / "001.mp4")
-    out_dir = str(project_root / "output" / "pose_keypoints")
+    video_id = Path(video_path).stem
+    out_dir = str(project_root / "output" / "pose_keypoints" / video_id)
 
     dump_pose_from_video(
         video_path=video_path,

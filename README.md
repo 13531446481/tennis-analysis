@@ -206,7 +206,7 @@ print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N
   ↓
 [4] 双人过滤 (pose_filter.py)
   ↓
-[5] 事件分析 (test/hit_bounce.py)
+[5] 事件分析 (hit_bounce.py)
   ↓
 分析结果 (CSV/视频)
 ```
@@ -326,11 +326,20 @@ output/pose_video/
 
 分析球轨迹，识别击球和落地帧，并支持预处理轨迹可视化核对。
 
+**击球高度建模说明（用于 3D 初速度反解）：**
+
+- 仅用 `1.85m`（身高）会低估击球点高度。
+- 当前默认将击球高度设为 `1.85 * 1.5 = 2.775m`，用于近似“身高 + 手臂伸展”后的击球高度。
+- 对应脚本默认参数：
+  - `step2_initial_velocity.py` 中 `--z_hit=2.775`
+  - `run_full_pipeline.py` 中 `--z_hit=2.775`
+- 若视频中击球姿态差异较大，可按样本手动调整 `--z_hit`。
+
 **命令：**
 
 ```bash
 # 简化入口：输出击球/落地 CSV（默认平滑）
-python test/hit_bounce.py --video videos/001.mp4
+python hit_bounce.py --video videos/001.mp4
 
 # 不平滑版本（更贴近原始预处理轨迹）
 python test/detect_hit_from_trajectory.py \
@@ -352,7 +361,7 @@ python test/plot_line_with_events.py \
 
 **核心脚本（建议保留）：**
 
-- `test/hit_bounce.py`：主入口（自动输出 hit/bounce）
+- `hit_bounce.py`：主入口（自动输出 hit/bounce）
 - `test/detect_hit_from_trajectory.py`：转折检测核心逻辑
 - `test/plot_line_with_events.py`：预处理轨迹与事件点可视化
 
@@ -410,7 +419,7 @@ X, Y: 像素坐标 (通常为负值表示不可见)
 
 ### 4. 事件输出 CSV
 
-路径: `output/ball/hit_bounce_{id}.csv` 或 `output/ball/hit_from_turns_{id}.csv`
+路径: `output/hit_bounce/{id}.csv` 或 `output/ball/hit_from_turns_{id}.csv`
 
 ```csv
 video_id,hit,bounce,hit_sec,bounce_sec
@@ -418,7 +427,7 @@ video_id,hit,bounce,hit_sec,bounce_sec
 ```
 
 说明：
-- `test/hit_bounce.py` 默认输出 `output/ball/hit_bounce_{id}.csv`
+- `hit_bounce.py` 默认输出 `output/hit_bounce/{id}.csv`
 - `test/detect_hit_from_trajectory.py` 可输出更详细字段（含 toss_apex、gap 等）
 
 ---
@@ -434,13 +443,22 @@ video_id,hit,bounce,hit_sec,bounce_sec
 
 ### 已知事件
 
-| 视频 | 击球帧 | 落地帧 | 备注 |
+| 视频 | 击球帧 | 落地帧 | 备注发球速度 |
 |------|--------|--------|------|
-| 001 | 197 | 206 | 标准发球 |
-| 002 | 55 | 66 | - |
-| 003 | 55 | 64 | - |
-| 004 | 29 | 39 | - |
-| 005 | 25 | 36 | - |
+| 001 | 197 | 206 | 203 |
+| 002 | 55 | 66 | 153 |
+| 003 | 21 | 33 | 170 |
+| 004 | 33 | 43 | 197 |？
+| 005 | 29 | 42 | 172 |  ？
+| 006 | 28 | 38 | 194 |？
+| 007 | 44 | 57 | 158 |？
+| 008 | 32 | 43 | 200 |
+| 009 | 228 | 239 | 203 |
+| 010 | 37 | 49 | 193 |
+| 011 | 34 | 48 | 177 | 
+| 012 | 10 | 22 | 188 |
+| 013 | 25 | 35 | 203 |
+| 014 | 155 | 168 | 148 |
 
 ---
 
@@ -526,9 +544,10 @@ python predict.py --output_dir /custom/path
 │   └── pose_video/                 # 可视化视频
 │
 ├── test/
-│   ├── hit_bounce.py               # 击球/落地分析主入口
 │   ├── detect_hit_from_trajectory.py # 转折检测核心逻辑
 │   └── plot_line_with_events.py    # 预处理轨迹可视化
+│
+├── hit_bounce.py                   # 击球/落地分析主入口
 │
 └── rtmlib/                         # RTMLib (骨骼检测库)
     ├── rtmlib/

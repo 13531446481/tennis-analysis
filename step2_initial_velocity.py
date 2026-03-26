@@ -97,7 +97,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Step2: solve initial velocity from Step1 2D + height assumptions")
     parser.add_argument("--video_id", type=str, default="001")
     parser.add_argument("--step1_json", type=str, default="", help="Path to step1_2d_xxx.json")
-    parser.add_argument("--z_hit", type=float, default=1.85, help="Hit height (m)")
+    parser.add_argument("--z_hit", type=float, default=2.775, help="Hit height (m), default=1.85*1.5")
     parser.add_argument("--z_bounce", type=float, default=0.0, help="Bounce height (m)")
     parser.add_argument("--g", type=float, default=9.81, help="Gravity (m/s^2)")
     parser.add_argument("--out_json", type=str, default="")

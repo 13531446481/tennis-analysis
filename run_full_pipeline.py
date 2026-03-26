@@ -88,7 +88,7 @@ def main() -> int:
     parser.add_argument("--model_path", type=str, default="checkpoints/tracknet-v4_best-model.pth")
     parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda", "auto"])
     parser.add_argument("--server_id", type=int, default=1)
-    parser.add_argument("--z_hit", type=float, default=1.85)
+    parser.add_argument("--z_hit", type=float, default=2.775)
     parser.add_argument("--z_bounce", type=float, default=0.0)
     parser.add_argument("--skip_predict", action="store_true", help="Reuse existing ball csv")
     parser.add_argument("--skip_pose", action="store_true", help="Reuse existing pose dump")
@@ -107,6 +107,8 @@ def main() -> int:
     ball_csv = root / "output" / "ball" / f"{args.video_id}_predict_ball.csv"
     line_npy = root / "output" / "line" / f"{args.video_id}.npy"
     hit_bounce_csv = root / "output" / "hit_bounce" / f"{args.video_id}.csv"
+    pose_dir = root / "output" / "pose_keypoints" / args.video_id
+    pose_npz = pose_dir / "dump.npz"
     players_npy = root / "output" / "pose_keypoints" / args.video_id / "2_keypoints.npy"
     step1_json = root / "output" / "step1_2d" / args.video_id / "step1_2d.json"
     step2_json = root / "output" / "step2_velocity" / args.video_id / "step2_velocity.json"
@@ -201,7 +203,7 @@ def main() -> int:
         pose_code = (
             "from estimate_pose import dump_pose_from_video; "
             f"dump_pose_from_video(video_path={str(video_path)!r}, "
-            f"out_dir={str(root / 'output' / 'pose_keypoints')!r}, "
+            f"out_dir={str(pose_dir)!r}, "
             f"device={pose_device!r}, "
             "backend='onnxruntime', mode='performance', to_openpose=False, max_frames=-1)"
         )
@@ -213,9 +215,12 @@ def main() -> int:
                 pose_code,
             ],
             root,
-            expected_outputs=[root / "output" / "pose_keypoints" / "dump.npz"],
+            expected_outputs=[pose_npz],
             env=run_env,
         )
+
+    if not pose_npz.exists():
+        raise FileNotFoundError(f"Pose npz not found: {pose_npz}")
 
     run_cmd(
         "Two-player filter (pose_filter.py)",
@@ -224,6 +229,8 @@ def main() -> int:
             "pose_filter.py",
             "--video_id",
             args.video_id,
+            "--pose_npz",
+            str(pose_npz),
             "--line_npy",
             str(line_npy),
             "--video_path",
@@ -235,10 +242,10 @@ def main() -> int:
     )
 
     run_cmd(
-        "Hit/Bounce detection (test/hit_bounce.py)",
+        "Hit/Bounce detection (hit_bounce.py)",
         [
             sys.executable,
-            "test/hit_bounce.py",
+            "hit_bounce.py",
             "--video",
             str(video_path),
             "--ball",
