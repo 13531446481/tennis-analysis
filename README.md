@@ -341,11 +341,11 @@ output/pose_video/
 # 简化入口：输出击球/落地 CSV（默认平滑）
 python hit_bounce.py --video videos/001.mp4
 
-# 不平滑版本（更贴近原始预处理轨迹）
-python test/detect_hit_from_trajectory.py \
-  --video-id 001 \
+# 更少平滑版本（更贴近原始预处理轨迹）
+python hit_bounce.py \
+  --video videos/001.mp4 \
   --smooth-k 1 \
-  --out output/ball/hit_from_turns_001_nosmooth.csv
+  --out output/hit_bounce/001_nosmooth.csv
 
 # 预处理轨迹图（用于人工核对 hit/bounce）
 python test/plot_line_with_events.py \
@@ -362,7 +362,7 @@ python test/plot_line_with_events.py \
 **核心脚本（建议保留）：**
 
 - `hit_bounce.py`：主入口（自动输出 hit/bounce）
-- `test/detect_hit_from_trajectory.py`：转折检测核心逻辑
+- `hit_bounce.py`：内置转折检测核心逻辑
 - `test/plot_line_with_events.py`：预处理轨迹与事件点可视化
 
 **输出事件（示例）：**
@@ -428,7 +428,7 @@ video_id,hit,bounce,hit_sec,bounce_sec
 
 说明：
 - `hit_bounce.py` 默认输出 `output/hit_bounce/{id}.csv`
-- `test/detect_hit_from_trajectory.py` 可输出更详细字段（含 toss_apex、gap 等）
+- `hit_bounce.py` 命令行输出包含 `toss_apex`、`reason` 等诊断信息
 
 ---
 
@@ -544,7 +544,6 @@ python predict.py --output_dir /custom/path
 │   └── pose_video/                 # 可视化视频
 │
 ├── test/
-│   ├── detect_hit_from_trajectory.py # 转折检测核心逻辑
 │   └── plot_line_with_events.py    # 预处理轨迹可视化
 │
 ├── hit_bounce.py                   # 击球/落地分析主入口

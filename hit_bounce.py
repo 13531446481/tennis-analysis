@@ -1,22 +1,11 @@
 import argparse
 import csv
 import os
-import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
-
-# Keep compatibility whether this file is placed in project root or under test/.
-_THIS_DIR = Path(__file__).resolve().parent
-for _p in (_THIS_DIR, _THIS_DIR / "test", _THIS_DIR.parent / "test"):
-    if _p.exists():
-        _s = str(_p)
-        if _s not in sys.path:
-            sys.path.insert(0, _s)
-
-import detect_hit_from_trajectory as dht
 
 
 def moving_average_1d(x: np.ndarray, k: int = 5) -> np.ndarray:
@@ -103,6 +92,25 @@ def interpolate_short_gaps(xy: np.ndarray, vis: np.ndarray, max_gap: int = 6) ->
     return out
 
 
+def interpolate_all_gaps(xy: np.ndarray, vis: np.ndarray) -> np.ndarray:
+    out = xy.copy().astype(np.float32)
+    idx = np.arange(len(out), dtype=np.float32)
+    valid_idx = idx[vis.astype(bool)]
+    if len(valid_idx) < 2:
+        raise RuntimeError("Not enough visible points to interpolate")
+
+    for dim in range(2):
+        vals = out[vis.astype(bool), dim]
+        out[:, dim] = np.interp(idx, valid_idx, vals)
+    return out
+
+
+def smooth_xy(xy: np.ndarray, k: int = 5) -> np.ndarray:
+    x = moving_average_1d(xy[:, 0], k)
+    y = moving_average_1d(xy[:, 1], k)
+    return np.stack([x, y], axis=1)
+
+
 def smooth_xy_segmentwise(xy: np.ndarray, k: int = 3) -> np.ndarray:
     """Apply smoothing only within contiguous valid segments.
 
@@ -133,6 +141,195 @@ def smooth_xy_segmentwise(xy: np.ndarray, k: int = 3) -> np.ndarray:
         i = j
 
     return out
+
+
+def detect_turns(y: np.ndarray, eps: float = 0.35, min_gap: int = 3) -> List[Tuple[int, str, float]]:
+    vy = np.diff(y, prepend=y[0])
+    turns: List[Tuple[int, str, float]] = []
+
+    for t in range(1, len(y) - 1):
+        vp = float(vy[t - 1])
+        vc = float(vy[t])
+        score = abs(vc - vp)
+
+        if vp < -eps and vc > eps:
+            turns.append((t, "apex", score))
+        elif vp > eps and vc < -eps:
+            turns.append((t, "rebound", score))
+
+    out: List[Tuple[int, str, float]] = []
+    for typ in ("apex", "rebound"):
+        seq = [item for item in turns if item[1] == typ]
+        seq.sort(key=lambda item: item[0])
+        keep: List[Tuple[int, str, float]] = []
+        for item in seq:
+            if not keep:
+                keep.append(item)
+                continue
+            if item[0] - keep[-1][0] < min_gap:
+                if item[2] > keep[-1][2]:
+                    keep[-1] = item
+            else:
+                keep.append(item)
+        out.extend(keep)
+
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def angle_deg(v1: np.ndarray, v2: np.ndarray) -> float:
+    n1 = float(np.linalg.norm(v1))
+    n2 = float(np.linalg.norm(v2))
+    if n1 < 1e-6 or n2 < 1e-6:
+        return 0.0
+    c = float(np.dot(v1, v2) / (n1 * n2))
+    c = max(-1.0, min(1.0, c))
+    return float(np.degrees(np.arccos(c)))
+
+
+def load_players(players_path: Path) -> np.ndarray:
+    arr = np.load(players_path)
+    if arr.ndim != 4 or arr.shape[1] < 2 or arr.shape[2] < 1 or arr.shape[3] != 2:
+        raise RuntimeError(f"Unexpected players shape: {arr.shape}")
+    return arr.astype(np.float32)
+
+
+def compute_ball_over_head(
+    xy: np.ndarray,
+    players: np.ndarray,
+    head_margin: float = 0.0,
+) -> np.ndarray:
+    out = np.zeros((len(xy),), dtype=bool)
+    upper = min(len(xy), len(players))
+    for t in range(upper):
+        by = float(xy[t, 1])
+        hy = float(players[t, 1, 0, 1])
+        if np.isnan(by) or np.isnan(hy):
+            continue
+        out[t] = (by + head_margin) < hy
+    return out
+
+
+def first_long_visible_start(vis: np.ndarray, min_len: int = 12) -> int:
+    run = 0
+    run_start = 0
+    for i, v in enumerate(vis.tolist()):
+        if int(v) == 1:
+            if run == 0:
+                run_start = i
+            run += 1
+            if run >= min_len:
+                return run_start
+        else:
+            run = 0
+    return 0
+
+
+def pick_initial_hit(
+    turns: List[Tuple[int, str, float]],
+    vis: np.ndarray,
+    ball_over_head: Optional[np.ndarray],
+    fps: float,
+    min_turn_score_q: float = 0.45,
+    max_follow_sec: float = 1.0,
+    over_head_win: int = 2,
+) -> Optional[Tuple[int, Optional[int], str]]:
+    if not turns:
+        return None
+
+    gate = first_long_visible_start(vis, min_len=max(8, int(round(0.28 * fps))))
+    cand = [t for t in turns if t[0] >= gate]
+    if not cand:
+        cand = turns
+
+    if ball_over_head is not None:
+        def above_head_near(frame_idx: int) -> bool:
+            left = max(0, frame_idx - over_head_win)
+            right = min(len(ball_over_head), frame_idx + over_head_win + 1)
+            return bool(np.any(ball_over_head[left:right]))
+
+        cand_oh = [t for t in cand if above_head_near(t[0])]
+        if cand_oh:
+            cand = cand_oh
+        else:
+            return None
+
+    scores = np.array([t[2] for t in cand], dtype=np.float32)
+    thr = float(np.quantile(scores, min_turn_score_q)) if len(scores) > 0 else 0.0
+    valid = [t for t in cand if t[2] >= thr] or cand
+
+    first = valid[0]
+    f0, typ, _ = first
+    if typ != "apex":
+        return f0, None, "first_turn_not_apex"
+
+    max_follow = max(3, int(round(max_follow_sec * fps)))
+    for t in valid:
+        if t[1] == "rebound" and t[0] > f0 and (t[0] - f0) <= max_follow:
+            return t[0], f0, "first_turn_is_apex_then_next_rebound"
+
+    for t in cand:
+        if t[1] == "rebound" and t[0] > f0:
+            return t[0], f0, "fallback_first_rebound_after_apex"
+
+    return None
+
+
+def pick_next_bounce_after_hit(
+    xy_s: np.ndarray,
+    hit_f0: int,
+    fps: float,
+    min_gap_sec: float = 0.08,
+    max_gap_sec: float = 0.63,
+    angle_q: float = 0.60,
+    min_angle_deg: float = 10.0,
+    local_radius: int = 3,
+    local_prominence_deg: float = 6.0,
+) -> Optional[int]:
+    total = len(xy_s)
+    min_gap = max(1, int(round(min_gap_sec * fps)))
+    max_gap = max(min_gap + 1, int(round(max_gap_sec * fps)))
+
+    start = max(1, hit_f0 + min_gap)
+    end = min(total - 2, hit_f0 + max_gap)
+    if end <= start:
+        return None
+
+    cands: List[Tuple[int, float]] = []
+    for t in range(start, end + 1):
+        p0 = xy_s[t - 1]
+        p1 = xy_s[t]
+        p2 = xy_s[t + 1]
+        if np.any(np.isnan(p0)) or np.any(np.isnan(p1)) or np.any(np.isnan(p2)):
+            continue
+
+        v_prev = p1 - p0
+        v_next = p2 - p1
+        cands.append((t, angle_deg(v_prev, v_next)))
+
+    if not cands:
+        return None
+
+    angles = np.array([angle for _, angle in cands], dtype=np.float32)
+    thr_q = float(np.quantile(angles, angle_q)) if len(angles) > 1 else float(angles[0])
+    thr = max(float(min_angle_deg), thr_q)
+
+    sig: List[Tuple[int, float, float]] = []
+    radius = max(1, int(local_radius))
+    for i, (t, angle) in enumerate(cands):
+        left = max(0, i - radius)
+        right = min(len(cands), i + radius + 1)
+        neigh = [cands[j][1] for j in range(left, right) if j != i]
+        local_base = float(np.median(neigh)) if neigh else 0.0
+        prominence = float(angle - local_base)
+        if angle >= thr and prominence >= float(local_prominence_deg):
+            sig.append((t, angle, prominence))
+
+    if sig:
+        sig.sort(key=lambda item: item[0])
+        return int(sig[0][0])
+
+    return int(max(cands, key=lambda item: item[1])[0])
 
 
 def get_fps(video_path: str) -> float:
@@ -186,7 +383,7 @@ def main() -> None:
     parser.add_argument("--ball", default="", help="Optional ball file path (.csv or .npy)")
     parser.add_argument("--players", default="", help="Optional players_only.npy path")
     parser.add_argument("--smooth-k", type=int, default=3, help="Smoothing window for trajectory")
-    parser.add_argument("--interp-max-gap", type=int, default=2, help="Only interpolate short missing gaps (frames)")
+    parser.add_argument("--interp-max-gap", type=int, default=2, help="Deprecated: kept for compatibility")
     parser.add_argument("--eps", type=float, default=0.35, help="Turning threshold for hit detection")
     parser.add_argument("--turn-q", type=float, default=0.45, help="Quantile threshold for hit turns")
     parser.add_argument("--follow-sec", type=float, default=1.0, help="Follow window after apex for hit")
@@ -216,15 +413,14 @@ def main() -> None:
     ball_path = resolve_ball_path(project_root, video_id, args.ball)
 
     if ball_path.endswith(".csv"):
-        xy, vis = dht.load_ball_csv(Path(ball_path))
+        xy, vis = load_ball_csv(str(Path(ball_path)))
     elif ball_path.endswith(".npy"):
         xy, vis = load_ball_npy(ball_path)
     else:
         raise RuntimeError(f"Unsupported ball file: {ball_path}")
 
-    xy_i = interpolate_short_gaps(xy, vis, max_gap=max(0, int(args.interp_max_gap)))
-    xy_s = smooth_xy_segmentwise(xy_i, k=max(1, int(args.smooth_k)))
-    x_s = xy_s[:, 0]
+    xy_i = interpolate_all_gaps(xy, vis)
+    xy_s = smooth_xy(xy_i, k=max(1, int(args.smooth_k)))
     y_s = xy_s[:, 1]
     fps = get_fps(str(video_path))
 
@@ -235,15 +431,15 @@ def main() -> None:
     ball_over_head: Optional[np.ndarray] = None
     if players_path.is_file():
         try:
-            players = dht.load_players(players_path)
-            ball_over_head = dht.compute_ball_over_head(xy_i, players, head_margin=float(args.head_margin))
+            players = load_players(players_path)
+            ball_over_head = compute_ball_over_head(xy_i, players, head_margin=float(args.head_margin))
         except Exception as e:
             print(f"[WARN] over-head constraint disabled due to players issue: {e}")
     else:
         print("[WARN] players file not found, over-head constraint disabled")
 
-    turns = dht.detect_turns(y_s, eps=float(args.eps), min_gap=max(2, int(round(0.12 * fps))))
-    picked = dht.pick_initial_hit(
+    turns = detect_turns(y_s, eps=float(args.eps), min_gap=max(2, int(round(0.12 * fps))))
+    picked = pick_initial_hit(
         turns,
         vis,
         ball_over_head,
@@ -256,7 +452,7 @@ def main() -> None:
         raise RuntimeError("Failed to detect hit")
 
     hit, toss_f0, reason = picked
-    bounce = dht.pick_next_bounce_after_hit(
+    bounce = pick_next_bounce_after_hit(
         xy_s,
         hit,
         fps=float(fps),
