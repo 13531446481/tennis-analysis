@@ -103,24 +103,33 @@
 
 #### 1. 视频文件
 
-在 `videos/` 目录放入测试视频：
+仓库当前提供了 `001` 到 `014` 的测试视频，直接放在 `videos/` 目录：
 
 ```bash
 videos/
-├── 001.mp4  # 可选
-└── 002.mp4  # 可选
+├── 001.mp4
+├── 002.mp4
+├── 003.mp4
+├── ...
+└── 014.mp4
 ```
 
 #### 2. 模型权重
 
-**TrackNet V4 权重** (129.84MB) 不包含在仓库中，需手动下载：
+**TrackNet V4 权重** 不包含在仓库中，需手动下载到 `checkpoints/tracknet-v4_best-model.pth`。
+
+参考来源：
+
+- Releases 页面：`https://github.com/AnInsomniacy/tracknet-series-pytorch/releases`
+- 直接下载链接：`https://github.com/AnInsomniacy/tracknet-series-pytorch/releases/latest/download/tracknet-v4_best-model.pth`
 
 ```bash
 # 创建权重目录
 mkdir -p checkpoints/
 
 # 下载权重到该路径
-# checkpoints/tracknet-v4_best-model.pth
+wget -O checkpoints/tracknet-v4_best-model.pth \
+  https://github.com/AnInsomniacy/tracknet-series-pytorch/releases/latest/download/tracknet-v4_best-model.pth
 ```
 
 > ⚠️ 如果缺少 `.pth` 文件，`predict.py` 会报错。
@@ -247,9 +256,13 @@ python predict.py \
 
 ```
 output/ball/
-├── 001_predict_ball.csv      # 球坐标序列
-└── 001_predict_ball.mp4      # 可视化视频 (可选)
+└── 001_predict_ball.csv      # 球坐标序列（默认/推荐输出）
 ```
+
+说明：
+
+- 当前项目常用流程默认使用 `--only_csv`，因此通常只生成 `output/ball/{id}_predict_ball.csv`
+- 如果运行 `predict.py` 时不带 `--only_csv`，还会额外生成可视化视频：`output/ball/{id}_predict.mp4`
 
 **CSV 格式：**
 
